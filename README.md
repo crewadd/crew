@@ -2,7 +2,7 @@
 
 **Humans run the commands. AI agents do the work.**
 
-crew is an orchestration framework for AI agents (Codex, Claude, etc.). It provides the structure; agents provide the labor. You don't write code—you run `plan` and `execute`, and agents handle everything: planning, coding, testing, fixing.
+crew is an orchestration framework for AI agents (Codex, Claude, etc.). It provides the structure; agents provide the labor. You don't write code—you run `plan` and `run`, and agents handle everything: planning, coding, testing, fixing.
 
 ---
 
@@ -30,13 +30,13 @@ Think of crew as a **workflow engine for agents**. It doesn't do the work—it d
 ┌─────────────────────────────────────────────────────────────┐
 │                      YOU (Human)                            │
 │                         │                                   │
-│                    run: crew plan                        │
-│                    run: crew execute                     │
+│                    run: crew plan                           │
+│                    run: crew run                            │
 │                         │                                   │
 └─────────────────────────┼───────────────────────────────────┘
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    crew (Framework)                      │
+│                    crew (Framework)                         │
 │                         │                                   │
 │    ┌────────────────────┼────────────────────┐              │
 │    ▼                    ▼                    ▼              │
@@ -50,10 +50,10 @@ Think of crew as a **workflow engine for agents**. It doesn't do the work—it d
 ┌─────────────────────────────────────────────────────────────┐
 │              AI AGENTS (Codex, Claude, etc.)                │
 │                                                             │
-│   ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐       │
-│   │  Plan   │  │  Code   │  │  Test   │  │   Fix   │       │
-│   │  Agent  │  │  Agent  │  │  Agent  │  │  Agent  │       │
-│   └─────────┘  └─────────┘  └─────────┘  └─────────┘       │
+│   ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐        │
+│   │  Plan   │  │  Code   │  │  Test   │  │   Fix   │        │
+│   │  Agent  │  │  Agent  │  │  Agent  │  │  Agent  │        │
+│   └─────────┘  └─────────┘  └─────────┘  └─────────┘        │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -83,9 +83,9 @@ What happens:
 
 You can review the plan, but you didn't write it—the agent did.
 
-### Step 2: Execute
+### Step 2: Run
 
-You run: `crew execute`
+You run: `crew run`
 
 What happens:
 1. For each milestone, the framework identifies ready tasks
@@ -273,7 +273,7 @@ That's it. Just these:
 |---------|-------------|----------------|
 | `crew init` | Run it | Scaffold a new project with crew.config.js template |
 | `crew plan` | Run it | Analyze project, create milestones, write tasks to COMPOUND.md |
-| `crew execute` | Run it | Execute all tasks: code, test, fix, repeat until done |
+| `crew run` | Run it | Execute all tasks: code, test, fix, repeat until done |
 | `crew verify` | Run it | Run quality checks, report issues |
 | `crew status` | Run it | Report current progress |
 
@@ -292,7 +292,7 @@ Creates:
 ### Resume Interrupted Work
 
 ```bash
-crew execute ./my-project --from=m3.2
+crew run ./my-project --from=m3.2
 ```
 
 Agents pick up where they left off.
@@ -452,7 +452,7 @@ crew init ./my-project
 crew plan ./my-project
 
 # Let agents do the work
-crew execute ./my-project
+crew run ./my-project
 
 # Check what agents accomplished
 crew status ./my-project
