@@ -1,0 +1,1232 @@
+#!/usr/bin/env node
+/**
+ * CLI command implementations.
+ *
+ * This file now delegates to domain and CLI modules for better organization:
+ * - Domain modules: src/plan/, src/task-manager/, etc.
+ * - CLI modules: src/cli/plan-cmd.ts, src/cli/task-cmd.ts, etc.
+ */
+
+import { resolve, join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import type { ParsedArgs } from './types.ts';
+import { createBuildContext, nextTasks, statusJson } from '../manager/index.ts';
+import { verify } from '../verifier/verifier.ts';
+import { executeBatchStreaming } from '../executor/index.ts';
+import { DEFAULT_ORCHESTRATOR_CONFIG } from '../orchestrator/types.ts';
+import type { CompoundTask } from '../types.ts';
+import { loadConfig, hasConfig, executeConfigInit } from '../config-loader.ts';
+import { ProgressLogger } from '../progress.ts';
+
+// Import new CLI modules
+import { handlePlanCommand } from './plan-cmd.ts';
+import { handleTaskCommand } from './task-cmd.ts';
+import { handleMilestoneCommand } from './milestone-cmd.ts';
+
+function validateProjectDir(projectDir: string): string {
+  const absDir = resolve(projectDir);
+  if (!existsSync(absDir)) {
+    console.error(`Error: project directory not found: ${absDir}`);
+    process.exit(1);
+  }
+  return absDir;
+}
+
+/**
+ * Plan command - delegated to plan-cmd.ts
+ */
+export async function runPlan(projectDir: string, subcommand?: string, subcommandArgs?: string[], flags?: Record<string, string | boolean>): Promise<void> {
+  await handlePlanCommand(projectDir, subcommand, subcommandArgs, flags);
+}
+
+export async function runVerify(projectDir: string): Promise<void> {
+  const absDir = validateProjectDir(projectDir);
+
+  const ctx = createBuildContext(absDir);
+  const report = await verify(ctx);
+
+  console.error(`[crew] Verification: ${report.passed ? 'PASS' : 'FAIL'}`);
+  for (const check of report.checks) {
+    console.error(`  ${check.name}: ${check.passed ? 'PASS' : 'FAIL'} (${check.issues.length} issues)`);
+  }
+
+  if (report.issues.length > 0) {
+    console.error('');
+    for (const issue of report.issues.slice(0, 20)) {
+      const loc = issue.file ? `${issue.file}${issue.line ? `:${issue.line}` : ''}` : '';
+      console.error(`  [${issue.check}] ${loc}: ${issue.message}`);
+    }
+    if (report.issues.length > 20) {
+      console.error(`  ... and ${report.issues.length - 20} more`);
+    }
+  }
+
+  if (!report.passed) process.exit(1);
+}
+
+export async function runStatus(projectDir: string, flags: Record<string, string | boolean> = {}): Promise<void> {
+  const absDir = validateProjectDir(projectDir);
+
+  // Use hierarchical store only
+  const { HierarchicalStore, generateTreeView } = await import('../store/hierarchical-store.ts');
+  const hStore = new HierarchicalStore(absDir);
+
+  if (hStore.listMilestoneDirs().length === 0) {
+    console.error('ERROR: No project. Run: crew init');
+    process.exit(1);
+  }
+
+  // Auto-generate COMPOUND.md view
+  await hStore.writeView();
+
+  const stats = hStore.getStats();
+
+  if (flags.json) {
+    // Build JSON state manually since generateState doesn't exist
+    const milestones = hStore.listMilestones();
+    const allTasks = milestones.flatMap(ms => hStore.listTasksForMilestone(ms));
+    const projectJson = JSON.parse(readFileSync(join(absDir, '.crew', 'project.json'), 'utf-8'));
+    const state = {
+      project: projectJson.name,
+      milestones: milestones.map(m => ({
+        id: m.id,
+        number: m.number,
+        title: m.title,
+        status: m.status,
+        tasks: hStore.listTasksForMilestone(m).map(t => ({
+          id: t.id,
+          title: t.title,
+          status: t.status,
+          assignee: t.assignee,
+        })),
+      })),
+      summary: {
+        tasks: { total: stats.tasks, done: stats.completed, active: stats.active, pending: stats.pending },
+        milestones: { total: stats.milestones, active: 0 },
+      },
+    };
+    process.stdout.write(JSON.stringify(state, null, 2) + '\n');
+  } else if (flags.inline) {
+    let projectName = 'project';
+    try {
+      const projectJson = JSON.parse(readFileSync(join(absDir, '.crew', 'project.json'), 'utf-8'));
+      projectName = projectJson.name || 'project';
+    } catch {}
+    console.log(`${projectName} | ${stats.milestones} ms | ${stats.completed}/${stats.tasks}`);
+  } else if (flags.minimal) {
+    let projectName = 'project';
+    try {
+      const projectJson = JSON.parse(readFileSync(join(absDir, '.crew', 'project.json'), 'utf-8'));
+      projectName = projectJson.name || 'project';
+    } catch {}
+    console.log(`Project: ${projectName}`);
+    console.log(`Tasks: ${stats.completed}/${stats.tasks} done`);
+    console.log(`Status: ${stats.active > 0 ? 'active' : stats.pending > 0 ? 'ready' : 'idle'}`);
+  } else {
+    // Use enhanced AI-optimized status with all features
+    const { generateStatus } = await import('./status-cmd.ts');
+
+    // Create adapter to make HierarchicalStore compatible with StatusStore interface
+    const storeAdapter = {
+      getProject: () => hStore.getProject(),
+      listMilestones: () => hStore.listMilestones(),
+      listTasks: () => hStore.listAllTasks(),
+      getTask: (id: string) => hStore.getTask(id),
+      getNextReady: (limit: number) => hStore.getNextReady(limit),
+    };
+
+    const output = generateStatus(storeAdapter, {
+      agents: flags.agents === true,
+      activity: flags.activity === true,
+      blockers: flags.blockers === true,
+    });
+    console.log(output);
+  }
+}
+
+export async function runInit(projectDir: string, flags: Record<string, string | boolean> = {}): Promise<void> {
+  const absDir = resolve(projectDir);
+
+  // Ensure directory exists
+  if (!existsSync(absDir)) {
+    console.error(`[crew] Error: directory not found: ${absDir}`);
+    process.exit(1);
+  }
+
+  // Check for .claude/ directory - if exists and -f flag, sync from it
+  const claudeDir = join(absDir, '.claude');
+  const hasClaude = existsSync(claudeDir);
+  const hasCrew = existsSync(join(absDir, '.crew'));
+  
+  if (hasClaude && (flags.force || flags.f || !hasCrew)) {
+    // Use new init logic with sync from .claude/
+    const { initProject } = await import('./init-cmd.ts');
+    const result = await initProject({
+      dir: absDir,
+      force: true,
+      name: typeof flags.name === 'string' ? flags.name : undefined,
+      goal: typeof flags.goal === 'string' ? flags.goal : undefined,
+    });
+    
+    if (!result.success) {
+      process.exit(1);
+    }
+    
+    console.error(`[crew] ${result.message}`);
+    console.error(`[crew] Project initialized at: ${result.projectPath}`);
+    
+    if (result.agentsImported.length > 0) {
+      console.error(`[crew] Agents synced: ${result.agentsImported.join(', ')}`);
+    }
+    if (result.skillsImported.length > 0) {
+      console.error(`[crew] Skills synced: ${result.skillsImported.join(', ')}`);
+    }
+    if (result.milestonesCreated > 0) {
+      console.error(`[crew] Milestones created: ${result.milestonesCreated}`);
+    }
+    
+    console.error(`[crew] Run \`crew plan\` to create the initial plan`);
+    return;
+  }
+
+  // Check if config already exists
+  if (hasConfig(absDir)) {
+    const loaded = await loadConfig(absDir);
+    console.error(`[crew] Config already exists: ${loaded?.path}`);
+    console.error(`[crew] Use -f to force re-initialization`);
+    return;
+  }
+
+  // Create a sample crew.json
+  const configContent = `{
+  "name": "My Project",
+  "description": "Enhancement plan for my Next.js project",
+  "setup": ".crew/setup"
+}
+`;
+
+  const setupDirPath = join(absDir, '.crew/setup');
+  const setupContent = `/**
+ * Crew setup - initialize project plan
+ *
+ * This file is loaded by crew.json via the "setup" field.
+ */
+
+export async function onInitCrew(ctx) {
+  console.log('[onInitCrew] Initializing crew for', ctx.projectDir);
+}
+
+export async function createPlan(ctx) {
+  const plan = ctx.createPlan('My Project Enhancement');
+
+  plan
+    .vars({ nodeVersion: '20' })
+    .addMilestone(ctx.createMilestone('bootstrap', 'Bootstrap')
+      .addTask({ id: 'install', title: 'Install dependencies', skill: 'repo/install' })
+      .addTask({ id: 'tsc', title: 'Type check', skill: 'page-verify', checks: ['tsc'] }))
+    .addMilestone(ctx.createMilestone('build', 'Build')
+      .addTask({ id: 'build-app', title: 'Build application', skill: 'page-verify', checks: ['build'] }));
+
+  return plan.build();
+}
+
+export async function onVerificationFailed(ctx, report) {
+  console.log('Verification failed:', report.issues);
+  return [];
+}
+`;
+
+  const configPath = join(absDir, 'crew.json');
+  const setupIndexPath = join(setupDirPath, 'index.js');
+  const { writeFileSync, mkdirSync } = await import('node:fs');
+
+  mkdirSync(setupDirPath, { recursive: true });
+  writeFileSync(configPath, configContent, 'utf-8');
+  writeFileSync(setupIndexPath, setupContent, 'utf-8');
+
+  console.error(`[crew] Created config: ${configPath}`);
+  console.error(`[crew] Created setup: ${setupIndexPath}`);
+  console.error(`[crew] Run \`crew plan init\` (or \`crew --project ${projectDir} plan init\` from outside) to initialize the plan`);
+}
+
+export async function runTask(projectDir: string, taskIdOrNext: string): Promise<void> {
+  const absDir = validateProjectDir(projectDir);
+
+  const ctx = createBuildContext(absDir);
+
+  // Resolve target task
+  let task: CompoundTask | undefined;
+
+  if (taskIdOrNext === 'auto' || taskIdOrNext === 'next') {
+    const result = await nextTasks(ctx);
+    // next can be a single object or an array
+    const nextVal = result.next;
+    if (Array.isArray(nextVal)) {
+      task = nextVal[0];
+    } else if (nextVal && typeof nextVal === 'object' && 'id' in nextVal) {
+      task = nextVal as CompoundTask;
+    }
+    if (!task) {
+      console.error(`[crew] No pending tasks found`);
+      process.exit(1);
+    }
+  } else {
+    const st = await statusJson(ctx);
+    for (const milestone of st.milestones) {
+      task = milestone.tasks.find((t) => t.id === taskIdOrNext);
+      if (task) break;
+    }
+    if (!task) {
+      console.error(`[crew] Task not found: ${taskIdOrNext}`);
+      process.exit(1);
+    }
+  }
+
+  const taskTitle = task.title || (task as unknown as Record<string, string>).task;
+  console.error(`[crew] Running task ${task.id}: ${taskTitle}`);
+
+  const logger = new ProgressLogger(absDir);
+  logger.log({ event: 'session:start', pid: process.pid, singleTask: task.id });
+
+  let success = false;
+  try {
+    for await (const event of executeBatchStreaming(ctx, [task], DEFAULT_ORCHESTRATOR_CONFIG)) {
+      logger.logEvent(event);
+
+      switch (event.type) {
+        case 'task:start':
+          console.error(`[crew] Task ${event.taskId} started (attempt ${event.attempt})`);
+          break;
+        case 'task:retry':
+          console.error(`[crew] Task ${event.taskId} retry #${event.attempt}: ${event.error}`);
+          break;
+        case 'task:done':
+          console.error(`[crew] Task ${event.taskId} done (${event.result.durationMs}ms)`);
+          success = true;
+          break;
+        case 'task:failed':
+          console.error(`[crew] Task ${event.taskId} FAILED: ${event.result.error}`);
+          break;
+      }
+    }
+  } finally {
+    logger.log({ event: 'session:end', reason: success ? 'completed' : 'error' });
+  }
+
+  if (!success) process.exit(1);
+}
+
+export async function runSync(projectDir: string): Promise<void> {
+  const absDir = validateProjectDir(projectDir);
+  
+  // Use hierarchical store
+  const { HierarchicalStore } = await import('../store/hierarchical-store.ts');
+  const store = new HierarchicalStore(absDir);
+  
+  if (store.listMilestoneDirs().length === 0) {
+    console.error(`[crew] Error: No .crew project found in ${absDir}`);
+    console.error(`[crew] Run \`crew init\` first to initialize the project.`);
+    process.exit(1);
+  }
+  
+  console.error(`[crew] Syncing project: ${absDir}`);
+  
+  // Sync agents/skills from .crew/ to .claude/
+  const { syncAgentsToClaude, syncSkillsToClaude } = await import('./init-cmd.ts');
+  const agentsCopied = syncAgentsToClaude(absDir);
+  const skillsCopied = syncSkillsToClaude(absDir);
+  
+  console.error(`[crew] Synced to .claude/:`);
+  console.error(`  Agents: ${agentsCopied.length} copied`);
+  console.error(`  Skills: ${skillsCopied.length} copied`);
+  
+  console.error(`[crew] Sync complete!`);
+}
+
+export async function runTree(projectDir: string): Promise<void> {
+  const absDir = validateProjectDir(projectDir);
+
+  const { HierarchicalStore, generateTreeView } = await import('../store/hierarchical-store.ts');
+  const store = new HierarchicalStore(absDir);
+
+  const msCount = store.listMilestoneDirs().length;
+  if (msCount === 0) {
+    console.error(`[crew] No milestones found. Run 'crew init' to initialize.`);
+    process.exit(1);
+  }
+
+  console.log(generateTreeView(store));
+
+  // Also show quick stats
+  const stats = store.getStats();
+  console.error('');
+  console.error(`Stats: ${stats.milestones} milestones, ${stats.tasks} tasks (${stats.completed} done, ${stats.active} active, ${stats.pending} pending)`);
+}
+
+/**
+ * Show current task context when no task ID is provided
+ */
+async function showCurrentTaskContext(projectDir: string): Promise<void> {
+  const absDir = validateProjectDir(projectDir);
+  const { HierarchicalStore } = await import('../store/hierarchical-store.ts');
+  const store = new HierarchicalStore(absDir);
+
+  if (store.listMilestoneDirs().length === 0) {
+    console.error('ERROR: No project. Run: crew init');
+    process.exit(1);
+  }
+
+  const milestones = store.listMilestones();
+  const project = store.getProject();
+
+  // Find current milestone - skip empty ones
+  const currentMsId = project?.current?.milestone;
+  let currentMs = milestones.find(m => m.id === currentMsId);
+  if (!currentMs || store.listTasksForMilestone(currentMs).length === 0) {
+    // Fall back to first incomplete milestone with tasks
+    currentMs = milestones.find(m => {
+      const tasks = store.listTasksForMilestone(m);
+      return tasks.length > 0 && tasks.some(t => t.status !== 'done');
+    });
+  }
+
+  if (!currentMs) {
+    console.error('No current milestone found. All tasks may be complete.');
+    console.error('Usage: crew task <id>');
+    process.exit(1);
+  }
+
+  const tasks = store.listTasksForMilestone(currentMs);
+
+  // Find current task (first non-done task)
+  const currentTaskIdx = tasks.findIndex(t => t.status !== 'done');
+  const currentTask = currentTaskIdx >= 0 ? tasks[currentTaskIdx] : null;
+
+  console.error('CURRENT CONTEXT:');
+  console.error('');
+  console.error(`Milestone: M${currentMs.number} ${currentMs.title}`);
+  console.error(`Progress: ${tasks.filter(t => t.status === 'done').length}/${tasks.length} tasks done`);
+  console.error('');
+
+  if (currentTask) {
+    const displayId = `m${currentMs.number}.${currentTaskIdx + 1}`;
+    console.error(`Current Task: ${displayId} ${currentTask.title} (${currentTask.status})`);
+
+    // Show previous task if exists
+    if (currentTaskIdx > 0) {
+      const prevTask = tasks[currentTaskIdx - 1];
+      const prevDisplayId = `m${currentMs.number}.${currentTaskIdx}`;
+      console.error(`  ← Previous: ${prevDisplayId} ${prevTask.title} (${prevTask.status})`);
+    }
+
+    // Show next task if exists
+    if (currentTaskIdx < tasks.length - 1) {
+      const nextTask = tasks[currentTaskIdx + 1];
+      const nextDisplayId = `m${currentMs.number}.${currentTaskIdx + 2}`;
+      console.error(`  → Next: ${nextDisplayId} ${nextTask.title} (${nextTask.status})`);
+    }
+
+    console.error('');
+    console.error('Usage:');
+    console.error(`  crew task ${displayId}       # View current task details`);
+    console.error(`  crew milestone m${currentMs.number}    # View current milestone details`);
+    console.error(`  crew status            # View full project status`);
+  } else {
+    console.error('All tasks in this milestone are complete.');
+    console.error('');
+    console.error('Usage: crew task <id>');
+    console.error('Example: crew task m1.1');
+  }
+}
+
+/**
+ * Show current milestone context when no milestone ID is provided
+ */
+async function showCurrentMilestoneContext(projectDir: string): Promise<void> {
+  const absDir = validateProjectDir(projectDir);
+  const { HierarchicalStore } = await import('../store/hierarchical-store.ts');
+  const store = new HierarchicalStore(absDir);
+
+  if (store.listMilestoneDirs().length === 0) {
+    console.error('ERROR: No project. Run: crew init');
+    process.exit(1);
+  }
+
+  const milestones = store.listMilestones();
+  const project = store.getProject();
+
+  // Find current milestone - skip empty ones
+  const currentMsId = project?.current?.milestone;
+  let currentMs = milestones.find(m => m.id === currentMsId);
+  if (!currentMs || store.listTasksForMilestone(currentMs).length === 0) {
+    // Fall back to first incomplete milestone with tasks
+    currentMs = milestones.find(m => {
+      const tasks = store.listTasksForMilestone(m);
+      return tasks.length > 0 && tasks.some(t => t.status !== 'done');
+    });
+  }
+
+  if (!currentMs) {
+    console.error('No current milestone found. All milestones may be complete.');
+    console.error('Usage: crew milestone <id>');
+    process.exit(1);
+  }
+
+  const currentIdx = milestones.findIndex(m => m.id === currentMs!.id);
+
+  console.error('CURRENT CONTEXT:');
+  console.error('');
+
+  // Show previous milestone
+  if (currentIdx > 0) {
+    const prevMs = milestones[currentIdx - 1];
+    const prevTasks = store.listTasksForMilestone(prevMs);
+    const prevDone = prevTasks.filter(t => t.status === 'done').length;
+    console.error(`  ✓ M${prevMs.number}: ${prevMs.title} (${prevDone}/${prevTasks.length} done)`);
+  }
+
+  // Show current milestone
+  const currentTasks = store.listTasksForMilestone(currentMs);
+  const currentDone = currentTasks.filter(t => t.status === 'done').length;
+  console.error(`  > M${currentMs.number}: ${currentMs.title} (${currentDone}/${currentTasks.length} done) ← CURRENT`);
+
+  // Show next milestone
+  if (currentIdx < milestones.length - 1) {
+    const nextMs = milestones[currentIdx + 1];
+    const nextTasks = store.listTasksForMilestone(nextMs);
+    const nextDone = nextTasks.filter(t => t.status === 'done').length;
+    console.error(`    M${nextMs.number}: ${nextMs.title} (${nextDone}/${nextTasks.length} done)`);
+  }
+
+  console.error('');
+  console.error('Usage:');
+  console.error(`  crew milestone m${currentMs.number}    # View current milestone details`);
+  if (currentIdx > 0) {
+    console.error(`  crew milestone m${milestones[currentIdx - 1].number}    # View previous milestone`);
+  }
+  if (currentIdx < milestones.length - 1) {
+    console.error(`  crew milestone m${milestones[currentIdx + 1].number}    # View next milestone`);
+  }
+  console.error(`  crew status            # View full project status`);
+}
+
+export async function runTaskView(
+  projectDir: string,
+  taskId: string,
+  flags: Record<string, string | boolean> = {}
+): Promise<void> {
+  const absDir = validateProjectDir(projectDir);
+
+  // Load hierarchical store
+  const { HierarchicalStore } = await import('../store/hierarchical-store.ts');
+  const store = new HierarchicalStore(absDir);
+
+  if (store.listMilestoneDirs().length === 0) {
+    console.error('ERROR: No project. Run: crew init');
+    process.exit(1);
+  }
+
+  // Find task by display ID (m4.1) or full ID
+  let task = null;
+  let milestone = null;
+
+  for (const ms of store.listMilestones()) {
+    const tasks = store.listTasksForMilestone(ms);
+
+    // Check display ID format (m4.1)
+    const match = taskId.match(/^m(\d+)\.(\d+)$/);
+    if (match) {
+      const msNum = parseInt(match[1], 10);
+      const taskIdx = parseInt(match[2], 10) - 1;
+
+      if (ms.number === msNum && taskIdx >= 0 && taskIdx < tasks.length) {
+        task = tasks[taskIdx];
+        milestone = ms;
+        break;
+      }
+    }
+
+    // Check full ID
+    task = tasks.find(t => t.id === taskId);
+    if (task) {
+      milestone = ms;
+      break;
+    }
+  }
+
+  if (!task || !milestone) {
+    console.error(`ERROR: Task not found: ${taskId}`);
+    process.exit(1);
+  }
+
+  // JSON output
+  if (flags.json) {
+    const taskJson = {
+      id: task.id,
+      displayId: `m${milestone.number}.${milestone.task_ids.indexOf(task.id) + 1}`,
+      title: task.title,
+      status: task.status,
+      assignee: task.assignee,
+      milestone: {
+        id: milestone.id,
+        number: milestone.number,
+        title: milestone.title,
+      },
+      input: task.input,
+      output: task.output,
+      dependencies: task.dependencies,
+      attempts: task.attempts,
+      status_history: task.status_history,
+    };
+    console.log(JSON.stringify(taskJson, null, 2));
+    return;
+  }
+
+  // Human-readable output
+  const { buildTaskContext } = await import('./context-builder.ts');
+  const { formatTaskContext, formatRelativeTime, formatDuration } = await import('./status-helpers.ts');
+
+  // Create store adapter
+  const storeAdapter = {
+    getProject: () => store.getProject(),
+    listMilestones: () => store.listMilestones(),
+    listTasks: () => store.listAllTasks(),
+    getTask: (id: string) => store.getTask(id),
+  };
+
+  const taskCtx = buildTaskContext(storeAdapter, task.id);
+  if (!taskCtx) {
+    console.error(`ERROR: Could not build task context`);
+    process.exit(1);
+  }
+
+  console.log('TASK DETAILS:');
+  console.log(formatTaskContext(taskCtx));
+
+  // Additional info: attempts history
+  if (task.attempts.length > 0) {
+    console.log('');
+    console.log('ATTEMPTS:');
+    for (const attempt of task.attempts) {
+      const started = formatRelativeTime(attempt.started_at);
+      const duration = attempt.duration_ms ? formatDuration(attempt.duration_ms) : 'ongoing';
+      const status = attempt.success ? '✓' : attempt.finished_at ? '✗' : '⋯';
+      console.log(`  ${status} ${attempt.agent} - ${started} (${duration})`);
+      if (attempt.error) {
+        console.log(`    Error: ${attempt.error}`);
+      }
+    }
+  }
+}
+
+export async function runMilestoneView(
+  projectDir: string,
+  milestoneId: string,
+  flags: Record<string, string | boolean> = {}
+): Promise<void> {
+  const absDir = validateProjectDir(projectDir);
+
+  // Load hierarchical store
+  const { HierarchicalStore } = await import('../store/hierarchical-store.ts');
+  const store = new HierarchicalStore(absDir);
+
+  if (store.listMilestoneDirs().length === 0) {
+    console.error('ERROR: No project. Run: crew init');
+    process.exit(1);
+  }
+
+  // Find milestone by number (m4 or 4) or full ID
+  let milestone = null;
+  const milestones = store.listMilestones();
+
+  // Try parsing as number
+  const msNum = parseInt(milestoneId.replace(/^m/i, ''), 10);
+  if (!isNaN(msNum)) {
+    milestone = milestones.find(ms => ms.number === msNum);
+  }
+
+  // Try full ID
+  if (!milestone) {
+    milestone = milestones.find(ms => ms.id === milestoneId);
+  }
+
+  if (!milestone) {
+    console.error(`ERROR: Milestone not found: ${milestoneId}`);
+    process.exit(1);
+  }
+
+  // JSON output
+  if (flags.json) {
+    const tasks = store.listTasksForMilestone(milestone);
+    const milestoneJson = {
+      id: milestone.id,
+      number: milestone.number,
+      title: milestone.title,
+      status: milestone.status,
+      gates: milestone.gates,
+      tasks: tasks.map((t, idx) => ({
+        id: t.id,
+        displayId: `m${milestone.number}.${idx + 1}`,
+        title: t.title,
+        status: t.status,
+        assignee: t.assignee,
+      })),
+    };
+    console.log(JSON.stringify(milestoneJson, null, 2));
+    return;
+  }
+
+  // Human-readable output
+  const { buildMilestoneContext } = await import('./context-builder.ts');
+  const { formatMilestoneContext } = await import('./status-helpers.ts');
+
+  // Create store adapter
+  const storeAdapter = {
+    getProject: () => store.getProject(),
+    listMilestones: () => store.listMilestones(),
+    listTasks: () => store.listAllTasks(),
+    getTask: (id: string) => store.getTask(id),
+  };
+
+  const msCtx = buildMilestoneContext(storeAdapter, milestone.id);
+  if (!msCtx) {
+    console.error(`ERROR: Could not build milestone context`);
+    process.exit(1);
+  }
+
+  console.log('MILESTONE DETAILS:');
+  console.log(formatMilestoneContext(msCtx));
+}
+
+export async function runSearch(
+  projectDir: string,
+  query: string,
+  flags: Record<string, string | boolean> = {}
+): Promise<void> {
+  const absDir = validateProjectDir(projectDir);
+
+  // Load search guide
+  const { listSearchPatterns, getSearchPattern, getQuickReference } = await import('./search-guide.ts');
+
+  // If no query or --help flag, show full guide
+  if (!query || flags.help) {
+    console.log(listSearchPatterns());
+    return;
+  }
+
+  // If query is 'quick' or 'ref', show quick reference
+  if (query === 'quick' || query === 'ref' || query === 'reference') {
+    console.log(getQuickReference());
+    return;
+  }
+
+  // Try to find matching pattern
+  const pattern = getSearchPattern(query);
+
+  if (pattern) {
+    // Show specific pattern
+    console.log(`PATTERN: ${pattern.name}\n`);
+    console.log(`Description: ${pattern.description}\n`);
+    console.log(`Tools: ${pattern.tools.join(', ')}\n`);
+    console.log(`Example:`);
+    console.log(`  ${pattern.example.split('\n').join('\n  ')}\n`);
+    console.log(`\nRun this command in your terminal or use the Grep/Glob/Read tools.`);
+    return;
+  }
+
+  // If no pattern match, show helpful message
+  console.log(`No search pattern found for: "${query}"\n`);
+  console.log(`Available patterns:`);
+  const { SEARCH_PATTERNS } = await import('./search-guide.ts');
+  for (const p of SEARCH_PATTERNS) {
+    console.log(`  - ${p.name.toLowerCase()}`);
+  }
+  console.log(`\nRun \`crew search\` to see all patterns.`);
+  console.log(`Run \`crew search quick\` for a quick reference.`);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Task CRUD Commands                                                 */
+/* ------------------------------------------------------------------ */
+
+export async function runTaskAdd(
+  projectDir: string,
+  args: string[],
+  flags: Record<string, string | boolean>
+): Promise<void> {
+  const absDir = validateProjectDir(projectDir);
+  const { HierarchicalStore } = await import('../store/hierarchical-store.ts');
+  const store = new HierarchicalStore(absDir);
+
+  if (store.listMilestoneDirs().length === 0) {
+    console.error('ERROR: No project. Run: crew init');
+    process.exit(1);
+  }
+
+  // Parse title from args (first non-flag argument)
+  const title = args.find(a => !a.startsWith('--'));
+  if (!title) {
+    console.error('Usage: crew task add "<title>" --milestone <n>');
+    console.error('Example: crew task add "Build homepage" --milestone 2');
+    process.exit(1);
+  }
+
+  // Parse flags
+  const milestoneNum = typeof flags.milestone === 'string' ? parseInt(flags.milestone, 10) : null;
+  if (!milestoneNum || isNaN(milestoneNum)) {
+    console.error('Error: --milestone <n> is required');
+    process.exit(1);
+  }
+
+  const group = typeof flags.group === 'string' ? flags.group : undefined;
+  const assignee = typeof flags.assignee === 'string' ? flags.assignee : undefined;
+  const input = typeof flags.input === 'string' ? flags.input : undefined;
+  const output = typeof flags.output === 'string' ? flags.output : undefined;
+  const prompt = typeof flags.prompt === 'string' ? flags.prompt : undefined;
+  const deps = typeof flags.deps === 'string' ? flags.deps.split(',').map(d => d.trim()) : [];
+
+  // Find milestone
+  const milestone = store.getMilestoneByNumber(milestoneNum);
+  if (!milestone) {
+    console.error(`Error: Milestone ${milestoneNum} not found`);
+    process.exit(1);
+  }
+
+  // Generate task ID
+  const taskIndex = milestone.task_ids.length + 1;
+  const taskId = `m${milestoneNum}.${taskIndex}`;
+  const now = new Date().toISOString();
+
+  // Create task
+  const task: import('../store/types.ts').Task = {
+    id: taskId,
+    version: 1,
+    title,
+    status: 'pending',
+    status_history: [],
+    milestone_id: milestone.id,
+    group,
+    assignee: assignee ? `agent_${assignee}` as import('../store/types.ts').AgentId : undefined,
+    dependencies: deps,
+    dependents: [],
+    input: input ? { description: input } : undefined,
+    output: output ? { description: output } : undefined,
+    prompt,
+    attempts: [],
+    created: { at: now, by: 'agent_cli' as import('../store/types.ts').AgentId },
+    updated: { at: now, by: 'agent_cli' as import('../store/types.ts').AgentId },
+  };
+
+  // Add task to milestone
+  milestone.task_ids.push(taskId);
+  milestone.updated = { at: now, by: 'agent_cli' as import('../store/types.ts').AgentId };
+  store.saveMilestone(milestone);
+  store.createTaskDir(task, milestone);
+
+  // Write prompt to markdown file if provided
+  if (prompt) {
+    const { writeFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const taskDir = store.getTaskDirPath(task, milestone);
+    writeFileSync(join(taskDir, 'README.md'), `# ${title}\n\n${prompt}`, 'utf-8');
+  }
+
+  console.error(`[crew] Task created: ${taskId} "${title}"`);
+  console.error(`[crew] Milestone: M${milestoneNum} ${milestone.title}`);
+  console.log(taskId);
+}
+
+export async function runTaskEdit(
+  projectDir: string,
+  args: string[],
+  flags: Record<string, string | boolean>
+): Promise<void> {
+  const absDir = validateProjectDir(projectDir);
+  const { HierarchicalStore } = await import('../store/hierarchical-store.ts');
+  const store = new HierarchicalStore(absDir);
+
+  if (store.listMilestoneDirs().length === 0) {
+    console.error('ERROR: No project. Run: crew init');
+    process.exit(1);
+  }
+
+  // Get task ID from first arg
+  const taskId = args[0];
+  if (!taskId) {
+    console.error('Usage: crew task edit <id> [--status <s>] [--title <t>] [--add-dep <id>] [--rm-dep <id>]');
+    process.exit(1);
+  }
+
+  // Find task
+  const task = store.getTask(taskId);
+  if (!task) {
+    console.error(`Error: Task '${taskId}' not found`);
+    process.exit(1);
+  }
+
+  const milestone = store.getMilestone(task.milestone_id);
+  if (!milestone) {
+    console.error(`Error: Milestone '${task.milestone_id}' not found`);
+    process.exit(1);
+  }
+
+  const changes: string[] = [];
+  const now = new Date().toISOString();
+
+  // Process flags
+  for (const [flag, value] of Object.entries(flags)) {
+    if (flag === 'status' && typeof value === 'string') {
+      const validStatuses = ['pending', 'active', 'done', 'blocked', 'failed', 'cancelled'];
+      if (!validStatuses.includes(value)) {
+        console.error(`Error: Invalid status '${value}'. Valid: ${validStatuses.join(', ')}`);
+        process.exit(1);
+      }
+      if (task.status !== value) {
+        changes.push(`status: ${task.status} → ${value}`);
+        task.status = value as import('../store/types.ts').Task['status'];
+      }
+    } else if (flag === 'title' && typeof value === 'string') {
+      if (task.title !== value) {
+        changes.push(`title: "${task.title}" → "${value}"`);
+        task.title = value;
+      }
+    } else if (flag === 'assignee' && typeof value === 'string') {
+      const newAssignee = value ? `agent_${value}` as import('../store/types.ts').AgentId : undefined;
+      if (task.assignee !== newAssignee) {
+        changes.push(`assignee: ${task.assignee || '—'} → ${value || '—'}`);
+        task.assignee = newAssignee;
+      }
+    } else if (flag === 'group' && typeof value === 'string') {
+      if (task.group !== value) {
+        changes.push(`group: ${task.group || '—'} → ${value}`);
+        task.group = value;
+      }
+    } else if (flag === 'input' && typeof value === 'string') {
+      task.input = { description: value };
+      changes.push(`input: ${value}`);
+    } else if (flag === 'output' && typeof value === 'string') {
+      task.output = { description: value };
+      changes.push(`output: ${value}`);
+    } else if (flag === 'prompt' && typeof value === 'string') {
+      task.prompt = value;
+      changes.push(`prompt: updated`);
+      // Also update PROMPT.md
+      const { writeFileSync } = await import('node:fs');
+      const { join } = await import('node:path');
+      const taskDir = store.getTaskDirPath(task, milestone);
+
+      // Generate frontmatter
+      const frontmatter = [
+        '---',
+        `title: ${task.title}`,
+        task.group ? `skill: ${task.group}` : null,
+        task.input ? `inputs:\n  - ${task.input.description || task.input}` : null,
+        task.output ? `outputs:\n  - ${task.output.description || task.output}` : null,
+        '---',
+        '',
+      ].filter(Boolean).join('\n');
+
+      writeFileSync(join(taskDir, 'PROMPT.md'), frontmatter + value, 'utf-8');
+    } else if (flag === 'add-dep' && typeof value === 'string') {
+      if (!task.dependencies.includes(value)) {
+        task.dependencies.push(value);
+        changes.push(`deps: added ${value}`);
+      }
+    } else if (flag === 'rm-dep' && typeof value === 'string') {
+      const idx = task.dependencies.indexOf(value);
+      if (idx >= 0) {
+        task.dependencies.splice(idx, 1);
+        changes.push(`deps: removed ${value}`);
+      }
+    }
+  }
+
+  if (changes.length === 0) {
+    console.error('[crew] No changes made');
+    return;
+  }
+
+  task.updated = { at: now, by: 'agent_cli' as import('../store/types.ts').AgentId };
+  store.saveTask(task, milestone);
+
+  console.error(`[crew] Task updated: ${taskId}`);
+  for (const change of changes) {
+    console.error(`[crew]   ${change}`);
+  }
+  console.log(taskId);
+}
+
+export async function runTaskRemove(
+  projectDir: string,
+  args: string[],
+  _flags: Record<string, string | boolean>
+): Promise<void> {
+  const absDir = validateProjectDir(projectDir);
+  const { HierarchicalStore } = await import('../store/hierarchical-store.ts');
+  const store = new HierarchicalStore(absDir);
+
+  if (store.listMilestoneDirs().length === 0) {
+    console.error('ERROR: No project. Run: crew init');
+    process.exit(1);
+  }
+
+  if (args.length === 0) {
+    console.error('Usage: crew task remove <id> [<id2> ...]');
+    process.exit(1);
+  }
+
+  const removed: string[] = [];
+
+  for (const taskId of args) {
+    const task = store.getTask(taskId);
+    if (!task) {
+      console.error(`Warning: Task '${taskId}' not found, skipping`);
+      continue;
+    }
+
+    const success = store.removeTask(taskId);
+    if (success) {
+      removed.push(taskId);
+      console.error(`[crew] Task removed: ${taskId} "${task.title}"`);
+    } else {
+      console.error(`Error: Failed to remove task '${taskId}'`);
+    }
+  }
+
+  console.log(removed.join(', '));
+}
+
+/* ------------------------------------------------------------------ */
+/*  Milestone CRUD Commands                                            */
+/* ------------------------------------------------------------------ */
+
+export async function runMilestoneAdd(
+  projectDir: string,
+  args: string[],
+  flags: Record<string, string | boolean>
+): Promise<void> {
+  const absDir = validateProjectDir(projectDir);
+  const { HierarchicalStore } = await import('../store/hierarchical-store.ts');
+  const store = new HierarchicalStore(absDir);
+
+  // Parse title from args (first non-flag argument)
+  const title = args.find(a => !a.startsWith('--'));
+  if (!title) {
+    console.error('Usage: crew milestone add "<title>"');
+    console.error('Example: crew milestone add "Authentication"');
+    process.exit(1);
+  }
+
+  const now = new Date().toISOString();
+  const milestones = store.listMilestones();
+  const nextNumber = milestones.length > 0 ? Math.max(...milestones.map(m => m.number)) + 1 : 0;
+
+  const milestoneId = `ms_${nextNumber}` as import('../store/types.ts').MilestoneId;
+
+  const milestone: import('../store/types.ts').Milestone = {
+    id: milestoneId,
+    version: 1,
+    number: nextNumber,
+    title,
+    status: 'planned',
+    task_ids: [],
+    gates: [],
+    created: { at: now, by: 'agent_cli' as import('../store/types.ts').AgentId },
+    updated: { at: now, by: 'agent_cli' as import('../store/types.ts').AgentId },
+  };
+
+  store.createMilestoneDir(milestone);
+
+  console.error(`[crew] Milestone created: M${nextNumber} "${title}"`);
+  console.log(`m${nextNumber}`);
+}
+
+export async function runMilestoneEdit(
+  projectDir: string,
+  args: string[],
+  flags: Record<string, string | boolean>
+): Promise<void> {
+  const absDir = validateProjectDir(projectDir);
+  const { HierarchicalStore } = await import('../store/hierarchical-store.ts');
+  const store = new HierarchicalStore(absDir);
+
+  if (store.listMilestoneDirs().length === 0) {
+    console.error('ERROR: No project. Run: crew init');
+    process.exit(1);
+  }
+
+  // Get milestone ID from first arg
+  const milestoneId = args[0];
+  if (!milestoneId) {
+    console.error('Usage: crew milestone edit <id> [--title <t>] [--status <s>]');
+    process.exit(1);
+  }
+
+  // Find milestone by number or ID
+  let milestone: import('../store/types.ts').Milestone | null = null;
+  const msNum = parseInt(milestoneId.replace(/^m/i, ''), 10);
+  if (!isNaN(msNum)) {
+    milestone = store.getMilestoneByNumber(msNum);
+  }
+  if (!milestone) {
+    milestone = store.getMilestone(milestoneId);
+  }
+
+  if (!milestone) {
+    console.error(`Error: Milestone '${milestoneId}' not found`);
+    process.exit(1);
+  }
+
+  const changes: string[] = [];
+  const now = new Date().toISOString();
+
+  // Process flags
+  for (const [flag, value] of Object.entries(flags)) {
+    if (flag === 'title' && typeof value === 'string') {
+      if (milestone.title !== value) {
+        changes.push(`title: "${milestone.title}" → "${value}"`);
+        milestone.title = value;
+      }
+    } else if (flag === 'status' && typeof value === 'string') {
+      const validStatuses = ['planned', 'active', 'completed', 'archived'];
+      if (!validStatuses.includes(value)) {
+        console.error(`Error: Invalid status '${value}'. Valid: ${validStatuses.join(', ')}`);
+        process.exit(1);
+      }
+      if (milestone.status !== value) {
+        changes.push(`status: ${milestone.status} → ${value}`);
+        milestone.status = value as import('../store/types.ts').Milestone['status'];
+      }
+    }
+  }
+
+  if (changes.length === 0) {
+    console.error('[crew] No changes made');
+    return;
+  }
+
+  milestone.updated = { at: now, by: 'agent_cli' as import('../store/types.ts').AgentId };
+  store.saveMilestone(milestone);
+
+  console.error(`[crew] Milestone updated: M${milestone.number}`);
+  for (const change of changes) {
+    console.error(`[crew]   ${change}`);
+  }
+  console.log(`m${milestone.number}`);
+}
+
+export async function runMilestoneRemove(
+  projectDir: string,
+  args: string[],
+  _flags: Record<string, string | boolean>
+): Promise<void> {
+  const absDir = validateProjectDir(projectDir);
+  const { HierarchicalStore } = await import('../store/hierarchical-store.ts');
+  const store = new HierarchicalStore(absDir);
+
+  if (store.listMilestoneDirs().length === 0) {
+    console.error('ERROR: No project. Run: crew init');
+    process.exit(1);
+  }
+
+  if (args.length === 0) {
+    console.error('Usage: crew milestone remove <id> [<id2> ...]');
+    process.exit(1);
+  }
+
+  const removed: string[] = [];
+
+  for (const milestoneId of args) {
+    // Find milestone by number or ID
+    let milestone: import('../store/types.ts').Milestone | null = null;
+    const msNum = parseInt(milestoneId.replace(/^m/i, ''), 10);
+    if (!isNaN(msNum)) {
+      milestone = store.getMilestoneByNumber(msNum);
+    }
+    if (!milestone) {
+      milestone = store.getMilestone(milestoneId);
+    }
+
+    if (!milestone) {
+      console.error(`Warning: Milestone '${milestoneId}' not found, skipping`);
+      continue;
+    }
+
+    // Check if milestone has tasks
+    if (milestone.task_ids.length > 0) {
+      console.error(`Error: Cannot remove milestone M${milestone.number} - it has ${milestone.task_ids.length} tasks. Remove tasks first.`);
+      continue;
+    }
+
+    // Remove milestone using store method
+    const success = store.removeMilestone(milestone.id);
+    if (success) {
+      removed.push(`m${milestone.number}`);
+      console.error(`[crew] Milestone removed: M${milestone.number} "${milestone.title}"`);
+    } else {
+      console.error(`Error: Failed to remove milestone '${milestoneId}'`);
+    }
+  }
+
+  console.log(removed.join(', '));
+}
+
+export async function dispatch(args: ParsedArgs): Promise<void> {
+  const { command, projectDir, taskIdOrNext, subcommand, subcommandArgs, flags } = args;
+
+  if (flags.help) {
+    const { showHelp } = await import('./args.ts');
+    showHelp();
+    process.exit(0);
+  }
+
+  // Validate projectDir is provided (either via --project or auto-detected)
+  // init command can work without existing .crew folder - default to cwd
+  if (!projectDir) {
+    if (command === 'init') {
+      args.projectDir = process.cwd();
+    } else {
+      console.error(`[crew] Error: No project directory specified.`);
+      console.error(`[crew] Use --project=<path> or run from within a project (with .crew folder).`);
+      console.error(`[crew] Run \`crew --help\` for usage information.`);
+      process.exit(1);
+    }
+  }
+
+  switch (command) {
+    case 'plan':
+      await runPlan(projectDir, subcommand, subcommandArgs, flags);
+      break;
+    case 'run':
+      await runTask(projectDir, taskIdOrNext || 'auto');
+      break;
+    case 'verify':
+      await runVerify(projectDir);
+      break;
+    case 'status':
+      await runStatus(projectDir, flags);
+      break;
+    case 'init':
+      await runInit(projectDir, flags);
+      break;
+    case 'sync':
+      await runSync(projectDir);
+      break;
+    case 'tree':
+      await runTree(projectDir);
+      break;
+    case 'task':
+      await handleTaskCommand(projectDir, taskIdOrNext, subcommand, subcommandArgs, flags);
+      break;
+    case 'milestone':
+      await handleMilestoneCommand(projectDir, taskIdOrNext, subcommand, subcommandArgs, flags);
+      break;
+    case 'search':
+      await runSearch(projectDir, taskIdOrNext || '', flags);
+      break;
+    default:
+      console.error(`[crew] Unknown command: ${command}`);
+      console.error(`[crew] Run \`crew --help\` for usage`);
+      process.exit(1);
+  }
+}

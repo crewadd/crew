@@ -1,0 +1,72 @@
+{
+  "name": "crew",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "Reactive agentic project orchestrator — plan, execute, verify, and fix in a resumable loop",
+  "license": "MIT",
+  "author": "Crew Framework Contributors",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/crew-framework/crew.git",
+    "directory": "packages/crew"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "orchestrator",
+    "automation",
+    "cli"
+  ],
+  "bin": {
+    "crew": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./planner": {
+      "import": "./dist/planner.js",
+      "types": "./dist/planner.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "prepublishOnly": "pnpm build && pnpm typecheck && pnpm test",
+    "crew": "tsx src/cli/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/*.test.ts",
+    "test:integration": "vitest run tests/integration/*.test.ts",
+    "test:watch": "vitest watch",
+    "test:all": "vitest run"
+  },
+  "dependencies": {
+    "@crew/agentfn": "workspace:*",
+    "@crew/codegen": "workspace:*",
+    "glob": "^11.0.0",
+    "yaml": "^2.7.0"
+  },
+  "peerDependencies": {
+    "@crew/agentfn": ">=0.1.0",
+    "@crew/codegen": ">=0.1.0",
+    "glob": ">=11.0.0",
+    "yaml": ">=2.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.5.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.18"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "@crew/codegen",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Fluent, indentation-aware source code emitter — structured builders for generating TypeScript/JSX files",
+  "license": "MIT",
+  "author": "Crew Framework Contributors",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/crew-framework/crew.git",
+    "directory": "packages/codegen"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.13",
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.18"
+  }
+}
