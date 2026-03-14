@@ -94,6 +94,15 @@ It builds a complete full-stack application (React + Express + PostgreSQL + Dock
 
 [View the full example →](./examples/task-management-app/)
 
+---
+
+## 📚 Documentation
+
+- [📖 Full Documentation](./docs/) - Complete guides and API reference
+- [🚀 Examples](./docs/examples/) - More examples and use cases
+
+---
+
 ## Why crew
 
 AI agents are powerful — but without structure, they drift.
