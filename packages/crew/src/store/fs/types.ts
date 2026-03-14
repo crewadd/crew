@@ -9,7 +9,7 @@
 /*  Status values                                                      */
 /* ------------------------------------------------------------------ */
 
-export type TaskStatus = 'pending' | 'active' | 'done' | 'failed' | 'blocked';
+export type TaskStatus = 'pending' | 'active' | 'done' | 'failed' | 'blocked' | 'cancelled' | 'awaiting_review';
 
 export type EpicStatus = 'planned' | 'active' | 'completed' | 'archived';
 

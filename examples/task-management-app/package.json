@@ -1,0 +1,30 @@
+{
+  "name": "task-management-app-example",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Comprehensive Crew framework example demonstrating full-stack orchestration",
+  "keywords": [
+    "crew",
+    "orchestration",
+    "example",
+    "task-management",
+    "full-stack"
+  ],
+  "scripts": {
+    "plan:init": "crew plan init",
+    "run": "crew run",
+    "review": "crew review",
+    "clean": "rm -rf .crew/epics .crew/state.json .crew/progress.jsonl packages",
+    "reset": "npm run clean && npm run plan:init"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "devDependencies": {
+    "@crewai/crew": "workspace:*"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

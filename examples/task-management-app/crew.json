@@ -1,0 +1,47 @@
+{
+  "$schema": "https://raw.githubusercontent.com/crewai/crew/main/schema/crew-config.schema.json",
+  "version": "1.0",
+  "project": {
+    "name": "Task Management App",
+    "description": "A comprehensive example demonstrating Crew's full capabilities through a full-stack task management application"
+  },
+  "setup": "./.crew/setup",
+  "store": {
+    "type": "filesystem",
+    "path": "./.crew"
+  },
+  "execution": {
+    "maxParallelTasks": 4,
+    "defaultAttempts": 3,
+    "progressLog": true
+  },
+  "agents": {
+    "default": "generalist",
+    "routing": {
+      "backend-security": "./.crew/agents/backend-security.md",
+      "backend-api": "./.crew/agents/backend-api.md",
+      "database-engineer": "./.crew/agents/database-engineer.md",
+      "frontend-react": "./.crew/agents/frontend-react.md",
+      "qa-engineer": "./.crew/agents/qa-engineer.md"
+    }
+  },
+  "skills": {
+    "path": "./.crew/skills"
+  },
+  "checks": {
+    "namedChecks": {
+      "tsc": {
+        "cmd": "npx tsc --noEmit"
+      },
+      "build": {
+        "cmd": "npm run build"
+      },
+      "test": {
+        "cmd": "npm test"
+      },
+      "lint": {
+        "cmd": "npm run lint"
+      }
+    }
+  }
+}

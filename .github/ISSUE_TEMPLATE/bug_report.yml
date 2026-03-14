@@ -1,0 +1,92 @@
+name: 🐛 Bug Report
+description: Report a bug or unexpected behavior
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please fill out the form below.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear description of what the bug is
+      placeholder: When I run crew run, it fails with...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the behavior
+      placeholder: |
+        1. Create a project with '...'
+        2. Run 'crew run'
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What you expected to happen
+      placeholder: The task should complete successfully
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened
+      placeholder: The task failed with error...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / Screenshots
+      description: Any relevant logs or screenshots
+      placeholder: Paste logs here or attach screenshots
+      render: shell
+
+  - type: input
+    id: version
+    attributes:
+      label: crew Version
+      description: Output of `crew --version` or package.json version
+      placeholder: v0.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js Version
+      description: Output of `node --version`
+      placeholder: v20.0.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other context about the problem
+      placeholder: This happens when using...

@@ -44,7 +44,7 @@ export function clearStoreCache(): void {
 export interface LegacyTask {
   id: string;  // m1.2 format
   task: string;
-  status: 'pending' | 'active' | 'done' | 'blocked' | 'failed' | 'cancelled';
+  status: 'pending' | 'active' | 'done' | 'blocked' | 'failed' | 'cancelled' | 'awaiting_review';
   assignee: string;
   deps: string[];
   input: string;

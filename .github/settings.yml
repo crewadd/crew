@@ -1,0 +1,156 @@
+# Repository settings for crew
+# This file can be used with probot/settings app
+
+repository:
+  # Repository name
+  name: crew
+
+  # Description
+  description: "A build system for AI agents — Plan. Execute. Verify. Fix. Ship."
+
+  # Homepage URL
+  homepage: https://github.com/crew-framework/crew
+
+  # Repository topics
+  topics:
+    - ai
+    - agents
+    - orchestration
+    - typescript
+    - automation
+    - framework
+    - agentic
+    - code-generation
+    - llm
+    - autonomous
+    - ai-coding
+    - multi-agent
+    - quality-gates
+    - crash-safe
+    - resumable
+
+  # Visibility
+  private: false
+
+  # Features
+  has_issues: true
+  has_projects: true
+  has_wiki: false
+  has_downloads: true
+
+  # Security
+  has_vulnerability_alerts: true
+  has_automated_security_fixes: true
+
+  # Default branch
+  default_branch: main
+
+  # Allow squash merge
+  allow_squash_merge: true
+  squash_merge_commit_title: PR_TITLE
+  squash_merge_commit_message: COMMIT_MESSAGES
+
+  # Allow merge commit
+  allow_merge_commit: true
+
+  # Allow rebase merge
+  allow_rebase_merge: true
+
+  # Delete branch on merge
+  delete_branch_on_merge: true
+
+# Branch protection
+branches:
+  - name: main
+    protection:
+      required_pull_request_reviews:
+        required_approving_review_count: 1
+        dismiss_stale_reviews: true
+        require_code_owner_reviews: true
+
+      required_status_checks:
+        strict: true
+        contexts:
+          - "Test & Typecheck (20)"
+          - "Lint"
+
+      enforce_admins: false
+
+      required_linear_history: false
+
+      restrictions: null
+
+# Labels
+labels:
+  # Type labels
+  - name: bug
+    color: 'd73a4a'
+    description: Something isn't working
+
+  - name: enhancement
+    color: 'a2eeef'
+    description: New feature or request
+
+  - name: documentation
+    color: '0075ca'
+    description: Improvements or additions to documentation
+
+  - name: question
+    color: 'd876e3'
+    description: Further information is requested
+
+  - name: good first issue
+    color: '7057ff'
+    description: Good for newcomers
+
+  - name: help wanted
+    color: '008672'
+    description: Extra attention is needed
+
+  # Priority labels
+  - name: 'priority: critical'
+    color: 'b60205'
+    description: Critical priority
+
+  - name: 'priority: high'
+    color: 'd93f0b'
+    description: High priority
+
+  - name: 'priority: medium'
+    color: 'fbca04'
+    description: Medium priority
+
+  - name: 'priority: low'
+    color: '0e8a16'
+    description: Low priority
+
+  # Status labels
+  - name: 'status: blocked'
+    color: 'e99695'
+    description: Blocked by another issue
+
+  - name: 'status: in progress'
+    color: 'c5def5'
+    description: Work in progress
+
+  - name: 'status: needs-triage'
+    color: 'ededed'
+    description: Needs initial review
+
+  # Package labels
+  - name: 'pkg: crew'
+    color: 'bfdadc'
+    description: crew package
+
+  - name: 'pkg: codets'
+    color: 'bfdadc'
+    description: codets package
+
+  - name: 'pkg: agentfn'
+    color: 'bfdadc'
+    description: agentfn package
+
+# Collaborators
+# collaborators:
+#   - username: example-user
+#     permission: push

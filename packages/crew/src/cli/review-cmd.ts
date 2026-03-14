@@ -91,7 +91,13 @@ export async function runReviewShow(
     process.exit(1);
   }
 
-  const { task, epic, displayId } = details;
+  const { task, displayId } = details;
+  const location = store.getTaskLocation(task.id);
+  if (!location) {
+    console.error(`[crew] Task location not found: ${taskId}`);
+    process.exit(1);
+  }
+  const epic = location.epic;
   const gates = getReviewGates(task);
   const reviews = listReviews(store, task, epic);
   const summary = readSummary(store, task, epic);
@@ -167,7 +173,13 @@ export async function runReviewApprove(
     process.exit(1);
   }
 
-  const { task, epic, displayId } = details;
+  const { task, displayId } = details;
+  const location = store.getTaskLocation(task.id);
+  if (!location) {
+    console.error(`[crew] Task location not found: ${taskId}`);
+    process.exit(1);
+  }
+  const epic = location.epic;
 
   if (task.status !== ('awaiting_review' as any)) {
     console.error(`[crew] Task ${displayId} is not awaiting review (status: ${task.status})`);
@@ -205,7 +217,13 @@ export async function runReviewRequestChanges(
     process.exit(1);
   }
 
-  const { task, epic, displayId } = details;
+  const { task, displayId } = details;
+  const location = store.getTaskLocation(task.id);
+  if (!location) {
+    console.error(`[crew] Task location not found: ${taskId}`);
+    process.exit(1);
+  }
+  const epic = location.epic;
 
   if (task.status !== ('awaiting_review' as any)) {
     console.error(`[crew] Task ${displayId} is not awaiting review (status: ${task.status})`);
@@ -248,7 +266,13 @@ export async function runReviewReject(
     process.exit(1);
   }
 
-  const { task, epic, displayId } = details;
+  const { task, displayId } = details;
+  const location = store.getTaskLocation(task.id);
+  if (!location) {
+    console.error(`[crew] Task location not found: ${taskId}`);
+    process.exit(1);
+  }
+  const epic = location.epic;
 
   if (task.status !== ('awaiting_review' as any)) {
     console.error(`[crew] Task ${displayId} is not awaiting review (status: ${task.status})`);

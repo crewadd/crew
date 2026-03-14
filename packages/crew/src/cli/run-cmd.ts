@@ -137,17 +137,19 @@ async function handleYieldedTasks(
 
     try {
       // Add task to epic using manager API
+      // Note: TaskDef from tasks/types.ts uses plural inputs/outputs,
+      // but addTask expects singular input/output (comma-separated string)
       const newTaskId = await addTask(
         mgr,
         taskDef.title,
         {
           epic: targetEpicNum,
           type: taskDef.type,
-          input: taskDef.input,
-          output: taskDef.output,
+          input: taskDef.inputs?.join(', '),
+          output: taskDef.outputs?.join(', '),
           deps: taskDef.deps,
           prompt: taskDef.prompt,
-          skills: taskDef.skill ? [taskDef.skill] : undefined,
+          skills: taskDef.skill ? [taskDef.skill] : taskDef.skills,
         }
       );
 

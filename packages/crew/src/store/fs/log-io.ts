@@ -69,10 +69,10 @@ export function appendLog(taskDir: string, entry: Omit<LogEntry, 't'> & { t?: st
     attempt = startNewAttempt(taskDir);
   }
 
-  const fullEntry: LogEntry = {
-    t: new Date().toISOString(),
+  const fullEntry = {
     ...entry,
-  };
+    t: entry.t || new Date().toISOString(),
+  } as LogEntry;
 
   const line = JSON.stringify(fullEntry) + '\n';
   appendFileSync(attemptFile(taskDir, attempt), line, 'utf-8');

@@ -148,7 +148,7 @@ export interface VerificationReport {
 /** Provider and model configuration for an agent */
 export interface AgentConfig {
   provider?: 'claude' | 'kimi' | 'qwen' | 'gemini';
-  backend?: 'cli';
+  backend?: 'cli' | 'sdk';
   model?: string;
 }
 
