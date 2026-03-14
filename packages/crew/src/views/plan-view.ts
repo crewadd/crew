@@ -2,7 +2,7 @@
  * Plan View - Generate comprehensive plan README with rich structure and links
  */
 
-import { MdBuilder } from '@crew/codegen';
+import { MdBuilder } from 'codets';
 import type { ViewableStore } from './types.ts';
 
 /**

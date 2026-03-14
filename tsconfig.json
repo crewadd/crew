@@ -16,7 +16,7 @@
     { "path": "packages/kimifn" },
     { "path": "packages/qwenfn" },
     { "path": "packages/geminifn" },
-    { "path": "packages/codegen" }
+    { "path": "packages/codets" }
   ],
   "files": []
 }

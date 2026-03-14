@@ -9,7 +9,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { join, basename } from 'node:path';
-import { MdBuilder } from '@crew/codegen';
+import { MdBuilder } from 'codets';
 import { readYaml } from './yaml-io.ts';
 import { readStatus } from './status-io.ts';
 import { readDeps } from './deps-io.ts';

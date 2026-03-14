@@ -10,7 +10,7 @@
  * - Gates status
  */
 
-import { MdBuilder } from '@crew/codegen';
+import { MdBuilder } from 'codets';
 import type { Task, Epic } from '../store/types.ts';
 
 export interface EpicViewContext {

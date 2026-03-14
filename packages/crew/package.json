@@ -52,13 +52,13 @@
   },
   "dependencies": {
     "@crew/agentfn": "workspace:*",
-    "@crew/codegen": "workspace:*",
+    "codets": "workspace:*",
     "glob": "^11.0.0",
     "yaml": "^2.7.0"
   },
   "peerDependencies": {
     "@crew/agentfn": ">=0.1.0",
-    "@crew/codegen": ">=0.1.0",
+    "codets": ">=0.1.0",
     "glob": ">=11.0.0",
     "yaml": ">=2.0.0"
   },

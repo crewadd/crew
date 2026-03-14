@@ -1,5 +1,5 @@
 {
-  "name": "@crew/codegen",
+  "name": "codets",
   "version": "0.1.0",
   "private": false,
   "description": "Fluent, indentation-aware source code emitter — structured builders for generating TypeScript/JSX files",
@@ -8,7 +8,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/crew-framework/crew.git",
-    "directory": "packages/codegen"
+    "directory": "packages/codets"
   },
   "publishConfig": {
     "access": "public"
