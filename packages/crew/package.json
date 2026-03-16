@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": false,
   "type": "module",
-  "description": "Reactive agentic project orchestrator — plan, execute, verify, and fix in a resumable loop",
+  "description": "A build system for AI agents — Plan. Execute. Verify. Fix. Ship.",
   "license": "MIT",
   "author": "Crew Framework Contributors",
   "repository": {
@@ -17,9 +17,11 @@
   "keywords": [
     "ai",
     "agent",
+    "ai-agent",
     "orchestrator",
     "orchestration",
     "automation",
+    "build-system",
     "cli",
     "framework",
     "typescript",
@@ -33,13 +35,17 @@
     "crash-safe",
     "hierarchical",
     "multi-agent",
+    "autonomous-agents",
     "task-planning",
+    "task-automation",
+    "task-execution",
     "workflow",
     "autonomous",
     "agent-driven-development",
     "codegen",
     "ai-coding",
-    "llm"
+    "llm",
+    "llm-orchestration"
   ],
   "bin": {
     "crew": "./dist/cli.js"
@@ -61,7 +67,7 @@
   ],
   "scripts": {
     "build": "tsup",
-    "prepublishOnly": "pnpm build && pnpm typecheck && pnpm test",
+    "prepublishOnly": "pnpm build && pnpm typecheck",
     "crew": "tsx src/cli/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -71,16 +77,8 @@
     "test:all": "vitest run"
   },
   "dependencies": {
-    "@crew/agentfn": "workspace:*",
-    "codets": "workspace:*",
     "glob": "^11.0.0",
     "yaml": "^2.7.0"
-  },
-  "peerDependencies": {
-    "@crew/agentfn": ">=0.1.0",
-    "codets": ">=0.1.0",
-    "glob": ">=11.0.0",
-    "yaml": ">=2.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

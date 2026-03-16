@@ -14,5 +14,7 @@ export default defineConfig({
   treeshake: true,
   minify: false,
   target: 'node18',
-  external: ['agentfn', 'codegen', 'glob'],
+  // Bundle workspace dependencies, only keep external for standard npm packages
+  noExternal: ['@crew/agentfn', '@crew/claudefn', '@crew/kimifn', '@crew/qwenfn', '@crew/geminifn', 'codets'],
+  external: ['glob', 'yaml'],
 });
